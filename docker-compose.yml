@@ -1,0 +1,336 @@
+services:
+  # SECURE_NET - Rede Segura Interna
+  
+  # DATACENTER - Servidor Central com Réplicas
+  datacenter:
+    build: .
+    container_name: ufersa-datacenter
+    environment:
+      - COMPONENT=datacenter
+      - USAR_REPLICAS=true
+    ports:
+      - "8080:8080"   # HTTP para clientes (externo)
+    expose:
+      - "6000"        # TCP interno (via proxy)
+    volumes:
+      - datacenter_data:/app/datacenter_dados
+    networks:
+      - secure_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/publickey || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # DMZ_NET - Zona Desmilitarizada
+  
+  # FIREWALL PROXY - Entre Bordas e Datacenter
+  firewall-proxy:
+    build: .
+    container_name: ufersa-firewall-proxy
+    environment:
+      - COMPONENT=firewall-proxy
+      - PROXY_TCP_PORT=6000
+      - DATACENTER_HOST=datacenter
+      - DATACENTER_TCP_PORT=6000
+      - IDS_HOST=ids
+      - IDS_LOG_PORT=5200
+    expose:
+      - "6000"
+    networks:
+      - dmz_net
+      - secure_net
+    depends_on:
+      datacenter:
+        condition: service_healthy
+
+  # IDS - Sistema de Detecção de Intrusão
+  ids:
+    build: .
+    container_name: ufersa-ids
+    environment:
+      - COMPONENT=ids
+      - IDS_LOG_PORT=5200
+      - FIREWALL_HOST=firewall-filtro
+      - FIREWALL_CMD_PORT=5100
+    expose:
+      - "5200/udp"
+    networks:
+      - dmz_net
+      - external_net
+    depends_on:
+      - firewall-filtro
+
+  # BORDA 1 - Servidor de Borda (Réplica 1)
+  borda-1:
+    build: .
+    container_name: ufersa-borda-1
+    environment:
+      - COMPONENT=borda
+      - DATACENTER_HOST=firewall-proxy
+      - DATACENTER_TCP_PORT=6000
+      - DATACENTER_HTTP_PORT=8080
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+      - BORDA_ID=1
+      - FIREWALL_HOST=firewall-filtro
+      - FIREWALL_CMD_PORT=5100
+      - IDS_HOST=ids
+      - IDS_LOG_PORT=5200
+      - SHARED_KEY_SEED=UFERSA_BORDA_SHARED_2025
+      - SHARED_AUTH_DIR=/app/borda_shared
+    expose:
+      - "5000/udp"
+      - "5001"
+    volumes:
+      - borda1_data:/app/borda_dados
+      - borda_shared_auth:/app/borda_shared
+    networks:
+      - dmz_net
+      - secure_net
+    depends_on:
+      - firewall-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5001/publickey || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  borda-2:
+    build: .
+    container_name: ufersa-borda-2
+    environment:
+      - COMPONENT=borda
+      - DATACENTER_HOST=firewall-proxy
+      - DATACENTER_TCP_PORT=6000
+      - DATACENTER_HTTP_PORT=8080
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+      - BORDA_ID=2
+      - FIREWALL_HOST=firewall-filtro
+      - FIREWALL_CMD_PORT=5100
+      - IDS_HOST=ids
+      - IDS_LOG_PORT=5200
+      - SHARED_KEY_SEED=UFERSA_BORDA_SHARED_2025
+      - SHARED_AUTH_DIR=/app/borda_shared
+    expose:
+      - "5000/udp"
+      - "5001"
+    volumes:
+      - borda2_data:/app/borda_dados
+      - borda_shared_auth:/app/borda_shared
+    networks:
+      - dmz_net
+      - secure_net
+    depends_on:
+      - firewall-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5001/publickey || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  borda-3:
+    build: .
+    container_name: ufersa-borda-3
+    environment:
+      - COMPONENT=borda
+      - DATACENTER_HOST=firewall-proxy
+      - DATACENTER_TCP_PORT=6000
+      - DATACENTER_HTTP_PORT=8080
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+      - BORDA_ID=3
+      - FIREWALL_HOST=firewall-filtro
+      - FIREWALL_CMD_PORT=5100
+      - IDS_HOST=ids
+      - IDS_LOG_PORT=5200
+      - SHARED_KEY_SEED=UFERSA_BORDA_SHARED_2025
+      - SHARED_AUTH_DIR=/app/borda_shared
+    expose:
+      - "5000/udp"
+      - "5001"
+    volumes:
+      - borda3_data:/app/borda_dados
+      - borda_shared_auth:/app/borda_shared
+    networks:
+      - dmz_net
+      - secure_net
+    depends_on:
+      - firewall-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5001/publickey || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # EXTERNAL_NET - Rede Externa (Sensores)
+  
+  # FIREWALL FILTRO - Entrada dos Sensores
+  firewall-filtro:
+    build: .
+    container_name: ufersa-firewall-filtro
+    environment:
+      - COMPONENT=firewall-filtro
+      - FIREWALL_UDP_PORT=5000
+      - FIREWALL_CMD_PORT=5100
+      - FIREWALL_HTTP_PORT=5001
+      - BORDA_1_HOST=borda-1
+      - BORDA_2_HOST=borda-2
+      - BORDA_3_HOST=borda-3
+      - BORDA_UDP_PORT=5000
+      - IDS_HOST=ids
+      - IDS_LOG_PORT=5200
+    ports:
+      - "5000:5000/udp"   # UDP exposto para sensores externos
+      - "5001:5001"       # HTTP para chaves (proxy para bordas)
+    expose:
+      - "5100"            # Porta de comandos do IDS
+    networks:
+      - external_net
+      - dmz_net
+    depends_on:
+      borda-1:
+        condition: service_healthy
+      borda-2:
+        condition: service_healthy
+      borda-3:
+        condition: service_healthy
+
+  # SENSORES - Campus UFERSA
+  sensor-mossoro:
+    build: .
+    container_name: ufersa-sensor-mossoro
+    environment:
+      - COMPONENT=dispositivo
+      - SENSOR_INDEX=0
+      - BORDA_HOST=firewall-filtro
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+    networks:
+      - external_net
+    depends_on:
+      - firewall-filtro
+    restart: on-failure
+
+  sensor-angicos:
+    build: .
+    container_name: ufersa-sensor-angicos
+    environment:
+      - COMPONENT=dispositivo
+      - SENSOR_INDEX=1
+      - BORDA_HOST=firewall-filtro
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+    networks:
+      - external_net
+    depends_on:
+      - firewall-filtro
+    restart: on-failure
+
+  sensor-paudosferros:
+    build: .
+    container_name: ufersa-sensor-paudosferros
+    environment:
+      - COMPONENT=dispositivo
+      - SENSOR_INDEX=2
+      - BORDA_HOST=firewall-filtro
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+    networks:
+      - external_net
+    depends_on:
+      - firewall-filtro
+    restart: on-failure
+
+  sensor-caraubas:
+    build: .
+    container_name: ufersa-sensor-caraubas
+    environment:
+      - COMPONENT=dispositivo
+      - SENSOR_INDEX=3
+      - BORDA_HOST=firewall-filtro
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+    networks:
+      - external_net
+    depends_on:
+      - firewall-filtro
+    restart: on-failure
+
+  # SENSOR MALICIOSO - Para testar IDS (só inicia com --profile ataque)
+  sensor-malicioso:
+    build: .
+    container_name: ufersa-sensor-malicioso
+    environment:
+      - COMPONENT=dispositivo
+      - SENSOR_ID=SENSOR-HACKER
+      - SENSOR_NOME=Sensor Invasor
+      - SENSOR_LOCALIZACAO=Desconhecido
+      - BORDA_HOST=firewall-filtro
+      - BORDA_UDP_PORT=5000
+      - BORDA_HTTP_PORT=5001
+      - MODO_ATAQUE=true
+    networks:
+      - external_net
+    depends_on:
+      - firewall-filtro
+    profiles:
+      - ataque
+
+  # CLIENTE - Reitoria (sob demanda)
+  cliente:
+    build: .
+    container_name: ufersa-cliente
+    environment:
+      - COMPONENT=cliente
+      - DATACENTER_HOST=datacenter
+      - DATACENTER_HTTP_PORT=8080
+      - MODO_INTERATIVO=false
+    networks:
+      - secure_net
+    depends_on:
+      datacenter:
+        condition: service_healthy
+    profiles:
+      - cliente
+
+# VOLUMES
+volumes:
+  datacenter_data:
+    driver: local
+  borda1_data:
+    driver: local
+  borda2_data:
+    driver: local
+  borda3_data:
+    driver: local
+  borda_shared_auth:
+    driver: local
+
+# NETWORKS - Arquitetura DMZ
+networks:
+  # Rede externa - Sensores e entrada do sistema
+  external_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  # Zona Desmilitarizada - Bordas e Firewalls
+  dmz_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+  # Rede segura interna - Datacenter
+  secure_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
